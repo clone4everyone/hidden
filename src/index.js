@@ -4,84 +4,101 @@ import { hostname } from "node:os";
 import wisp from "wisp-server-node";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
+import next from "next";
 
-// static paths
+// UV static paths
 import { publicPath } from "static";
 import { uvPath } from "@titaniumnetwork-dev/ultraviolet";
 import { epoxyPath } from "@mercuryworkshop/epoxy-transport";
 import { baremuxPath } from "@mercuryworkshop/bare-mux/node";
 
 const fastify = Fastify({
-	serverFactory: (handler) => {
-		return createServer()
-			.on("request", (req, res) => {
-				res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-				res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-				handler(req, res);
-			})
-			.on("upgrade", (req, socket, head) => {
-				if (req.url.endsWith("/wisp/")) wisp.routeRequest(req, socket, head);
-				else socket.end();
-			});
-	},
+  serverFactory: (handler) => {
+    return createServer()
+      .on("request", (req, res) => {
+        res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+        res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+        handler(req, res);
+      })
+      .on("upgrade", (req, socket, head) => {
+        if (req.url.endsWith("/wisp/")) wisp.routeRequest(req, socket, head);
+        else socket.end();
+      });
+  },
 });
 
-fastify.register(fastifyStatic, {
-	root: publicPath,
-	decorateReply: true,
-});
+(async () => {
+  console.log("🚀 Initializing Fastify + Next.js");
 
-fastify.get("/uv/uv.config.js", (req, res) => {
-	return res.sendFile("uv/uv.config.js", publicPath);
-});
+  // Prepare Next.js app
+  const nextApp = next({
+    dev: false,
+    dir: join(process.cwd(), "frontend"),
+  });
+  const handle = nextApp.getRequestHandler();
+  await nextApp.prepare();
 
-fastify.register(fastifyStatic, {
-	root: uvPath,
-	prefix: "/uv/",
-	decorateReply: false,
-});
+  // Static file registrations with specific prefixes
+  fastify.register(fastifyStatic, {
+    root: publicPath,
+    prefix: "/static/",
+    decorateReply: true,
+  });
 
-fastify.register(fastifyStatic, {
-	root: epoxyPath,
-	prefix: "/epoxy/",
-	decorateReply: false,
-});
+  fastify.register(fastifyStatic, {
+    root: uvPath,
+    prefix: "/uv/",
+    decorateReply: false,
+  });
 
-fastify.register(fastifyStatic, {
-	root: baremuxPath,
-	prefix: "/baremux/",
-	decorateReply: false,
-});
+  fastify.register(fastifyStatic, {
+    root: epoxyPath,
+    prefix: "/epoxy/",
+    decorateReply: false,
+  });
 
-fastify.server.on("listening", () => {
-	const address = fastify.server.address();
+  fastify.register(fastifyStatic, {
+    root: baremuxPath,
+    prefix: "/baremux/",
+    decorateReply: false,
+  });
 
-	// by default we are listening on 0.0.0.0 (every interface)
-	// we just need to list a few
-	console.log("Listening on:");
-	console.log(`\thttp://localhost:${address.port}`);
-	console.log(`\thttp://${hostname()}:${address.port}`);
-	console.log(
-		`\thttp://${
-			address.family === "IPv6" ? `[${address.address}]` : address.address
-		}:${address.port}`
-	);
-});
+  // uv.config.js manual handler
+  fastify.get("/uv/uv.config.js", (req, res) => {
+    return res.sendFile("uv/uv.config.js", publicPath);
+  });
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+  // Fallback to Next.js for everything else
+  fastify.setNotFoundHandler((req, res) => {
+    handle(req.raw, res.raw).then(() => {
+      res.sent = true;
+    });
+  });
 
-function shutdown() {
-	console.log("SIGTERM signal received: closing HTTP server");
-	fastify.close();
-	process.exit(0);
-}
+  // Start the server
+  const port = parseInt(process.env.PORT || "8080");
+  fastify.listen({ port, host: "0.0.0.0" }, (err) => {
+    if (err) {
+      console.error("❌ Failed to start server:", err);
+      process.exit(1);
+    }
 
-let port = parseInt(process.env.PORT || "");
+    const address = fastify.server.address();
+    console.log("✅ Server is listening on:");
+    console.log(`→ http://localhost:${address.port}`);
+    console.log(`→ http://${hostname()}:${address.port}`);
+  });
 
-if (isNaN(port)) port = 8080;
+  // Graceful shutdown
+  process.on("SIGINT", () => {
+    console.log("SIGINT received. Shutting down...");
+    fastify.close();
+    process.exit(0);
+  });
 
-fastify.listen({
-	port: port,
-	host: "0.0.0.0",
-});
+  process.on("SIGTERM", () => {
+    console.log("SIGTERM received. Shutting down...");
+    fastify.close();
+    process.exit(0);
+  });
+})();
