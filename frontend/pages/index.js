@@ -4,178 +4,194 @@ import { useEffect, useState } from "react";
 export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   // Function to handle the actual proxy navigation
- // Replace your handleProxyNavigation function with this improved version:
+  const handleProxyNavigation = async (address) => {
+    console.log("[handleProxyNavigation] Invoked with address:", address);
 
-const handleProxyNavigation = async (address) => {
-  console.log("[handleProxyNavigation] Invoked with address:", address);
+    setIsLoading(true);
 
-  console.log("Navigating to:", address);
-  
-  // Get the iframe element
-  const frame = document.getElementById("uv-frame");
-  if (!frame) {
-    console.error("Frame not found");
-    return;
-  }
-
-  try {
-    // Make sure the service worker is registered and ready
-    if ('serviceWorker' in navigator) {
-      const registration = await navigator.serviceWorker.ready;
-      console.log("Service worker ready:", registration);
-    }
-console.log("[iframe] Final frame src is:", frame.src);
-
-    // Wait a moment for everything to be ready
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Try different proxy paths - adjust these based on your actual Ultraviolet setup
-    const possiblePaths = [
-      `/service/${encodeURIComponent(address)}`,
-      `/proxy/${encodeURIComponent(address)}`,
-      `/uv/service/${encodeURIComponent(address)}`,
-      `/__uv$${encodeURIComponent(address)}` // Common Ultraviolet pattern
-    ];
-
-    let success = false;
-    
-    for (const path of possiblePaths) {
-      try {
-        // Test if the path exists by making a fetch request
-        const testResponse = await fetch(path, { method: 'HEAD' });
-        if (testResponse.ok || testResponse.status !== 404) {
-          frame.src = path;
-          success = true;
-          console.log("Successfully loaded with path:", path);
-          break;
-        }
-      } catch (e) {
-        // Continue to next path
-        continue;
+    try {
+      // Register service worker first
+      await registerSW();
+    } catch (err) {
+      console.error("Failed to register service worker:", err);
+      const errorElement = document.getElementById("uv-error");
+      if (errorElement) {
+        errorElement.textContent = "Failed to register service worker.";
       }
+      setIsLoading(false);
+      return;
     }
 
-    if (!success) {
-      console.error("All proxy paths failed, trying direct approach");
-      // If all paths fail, try the original approach
-      frame.src = `/service/${encodeURIComponent(address)}`;
-    }
-
-  } catch (error) {
-    console.error("Error in proxy navigation:", error);
-    // Fallback
-    frame.src = `/service/${encodeURIComponent(address)}`;
-  }
-};
-
-// Also add this improved error handling for the iframe:
-useEffect(() => {
-  if (isSearching) {
+    // Get the iframe element
     const frame = document.getElementById("uv-frame");
-    
-    if (frame) {
-      const handleFrameLoad = () => {
-        console.log("Frame loaded successfully");
-      };
-      
-      const handleFrameError = () => {
-        console.error("Frame failed to load");
-        // You could show an error message to the user here
-        const errorElement = document.getElementById("uv-error");
-        if (errorElement) {
-          errorElement.textContent = "Failed to load the requested page. Please try again.";
-        }
-      };
-
-      frame.addEventListener('load', handleFrameLoad);
-      frame.addEventListener('error', handleFrameError);
-
-      return () => {
-        frame.removeEventListener('load', handleFrameLoad);
-        frame.removeEventListener('error', handleFrameError);
-      };
+    if (!frame) {
+      console.error("Frame not found");
+      setIsLoading(false);
+      return;
     }
-  }
-}, [isSearching]);
+
+    try {
+      // Initialize BareMux connection
+      const connection = new BareMux.BareMuxConnection("/baremux/worker.js");
+      
+      // Set up transport
+      let wispUrl = (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/wisp/";
+      
+      // Always set the transport to ensure it's properly configured
+      await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
+      
+      // Wait a moment for the connection to be ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Navigate to the proxied URL
+      const proxiedUrl = __uv$config.prefix + __uv$config.encodeUrl(address);
+      frame.src = proxiedUrl;
+      
+      console.log("Successfully navigated to:", proxiedUrl);
+
+    } catch (error) {
+      console.error("Error in proxy navigation:", error);
+      const errorElement = document.getElementById("uv-error");
+      if (errorElement) {
+        errorElement.textContent = "Failed to connect to proxy. Please try again.";
+      }
+      setIsLoading(false);
+    }
+  };
 
   // Function to handle search submissions
-  const handleSearch = (query) => {
-  if (query.trim()) {
-    let finalUrl = query.trim();
+  const handleSearch = async (query) => {
+    if (query.trim()) {
+      let finalUrl = query.trim();
 
-    // Simple URL detection
-    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-      if (finalUrl.includes('.') && !finalUrl.includes(' ')) {
-        finalUrl = 'https://' + finalUrl;
+      // Simple URL detection using the search function from search.js
+      if (typeof window !== 'undefined' && window.search) {
+        finalUrl = window.search(finalUrl, "https://www.google.com/search?q=%s");
       } else {
-        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(finalUrl)}`;
+        // Fallback URL processing
+        if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+          if (finalUrl.includes('.') && !finalUrl.includes(' ')) {
+            finalUrl = 'https://' + finalUrl;
+          } else {
+            finalUrl = `https://www.google.com/search?q=${encodeURIComponent(finalUrl)}`;
+          }
+        }
       }
+
+      // Set state and navigate
+      setSearchQuery(query);
+      setIsSearching(true);
+
+      // Navigate to the new query
+      await handleProxyNavigation(finalUrl);
     }
+  };
 
-    // Set state and navigate (even if same as before)
-    setSearchQuery(query);
-    setIsSearching(true);
-
-    // Force navigation to the new query
-    handleProxyNavigation(finalUrl);
-  }
-};
-
-  // Handle form submission for initial search
-  const handleFormSubmit = (e) => {
+  // Handle form submission
+  const handleFormSubmit = async (e) => {
     e.preventDefault();
     const address = document.getElementById("uv-address").value;
-    handleSearch(address);
+    await handleSearch(address);
   };
 
-  // Handle persistent search bar submission
-  const handlePersistentSearch = (e) => {
-    e.preventDefault();
-    handleSearch(searchQuery);
-  };
-
-  // Handle Enter key in persistent search input
-  const handlePersistentKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      handleSearch(searchQuery);
+  // Handle going back to home
+  const handleGoHome = () => {
+    setIsSearching(false);
+    setSearchQuery("");
+    setIsLoading(false);
+    
+    // Clear the iframe
+    const frame = document.getElementById("uv-frame");
+    if (frame) {
+      frame.src = "about:blank";
+    }
+    
+    // Clear any error messages
+    const errorElement = document.getElementById("uv-error");
+    if (errorElement) {
+      errorElement.textContent = "";
     }
   };
 
   useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "/index.js";
-    script.defer = true;
-    document.body.appendChild(script);
-
-    // Wait for scripts to load before setting up event listeners
-    const setupEventListeners = () => {
-      const form = document.getElementById("uv-form");
-      if (form) {
-        // Remove existing listener if any
-        form.removeEventListener("submit", handleFormSubmit);
-        form.addEventListener("submit", handleFormSubmit);
-      }
+    // Load external scripts
+    const loadScript = (src) => {
+      return new Promise((resolve, reject) => {
+        if (document.querySelector(`script[src="${src}"]`)) {
+          resolve();
+          return;
+        }
+        
+        const script = document.createElement("script");
+        script.src = src;
+        script.defer = true;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.body.appendChild(script);
+      });
     };
 
-    // Setup after a short delay to ensure DOM is ready
-    setTimeout(setupEventListeners, 100);
+    // Load required scripts
+    Promise.all([
+      loadScript("/index.js"),
+      loadScript("/search.js")
+    ]).then(() => {
+      console.log("Scripts loaded successfully");
+    }).catch(err => {
+      console.error("Failed to load scripts:", err);
+    });
 
+    // Cleanup function
     return () => {
-      const form = document.getElementById("uv-form");
-      if (form) {
-        form.removeEventListener("submit", handleFormSubmit);
-      }
+      // Clean up any resources if needed
     };
   }, []);
+
+  // Add iframe error handling
+  useEffect(() => {
+    if (isSearching) {
+      const frame = document.getElementById("uv-frame");
+      
+      if (frame) {
+        const handleFrameLoad = () => {
+          console.log("Frame loaded successfully");
+          setIsLoading(false); // Hide loader when frame loads
+          // Clear any previous error messages
+          const errorElement = document.getElementById("uv-error");
+          if (errorElement) {
+            errorElement.textContent = "";
+          }
+        };
+        
+        const handleFrameError = () => {
+          console.error("Frame failed to load");
+          setIsLoading(false); // Hide loader on error
+          const errorElement = document.getElementById("uv-error");
+          if (errorElement) {
+            errorElement.textContent = "Failed to load the requested page. Please try again.";
+          }
+        };
+
+        frame.addEventListener('load', handleFrameLoad);
+        frame.addEventListener('error', handleFrameError);
+
+        return () => {
+          frame.removeEventListener('load', handleFrameLoad);
+          frame.removeEventListener('error', handleFrameError);
+        };
+      }
+    }
+  }, [isSearching]);
 
   return (
     <>
       <Head>
-        <title>Ultraviolet | Sophisticated Web Proxy</title>
-        <meta name="description" content="Ultraviolet is a highly sophisticated proxy..." />
-        <meta name="keywords" content="proxy, ultraviolet, unblock, titanium network" />
+        <title>IncogWay | Sophisticated Web Proxy</title>
+        <meta name="description" content="Incogway is a highly sophisticated proxy..." />
+        <meta name="keywords" content="proxy, ultraviolet, IncogWay, titanium network" />
         <link rel="icon" href="/favicon.ico" />
         <script src="/baremux/index.js" defer></script>
         <script src="/epoxy/index.js" defer></script>
@@ -190,12 +206,12 @@ useEffect(() => {
         {!isSearching && (
           <div className="home-screen">
             <div className="logo-wrapper">
-              <h1>Ultraviolet | TN</h1>
+              <h1>IncogWay</h1>
             </div>
 
             <div className="description">
               <p>
-                Ultraviolet is a highly sophisticated proxy used for evading internet censorship.
+                IncogWay is a highly sophisticated proxy used for evading internet censorship.
               </p>
             </div>
 
@@ -210,7 +226,7 @@ useEffect(() => {
                   id="uv-address" 
                   type="text" 
                   placeholder="Search the web freely"
-                  defaultValue={searchQuery}
+                  defaultValue=""
                 />
                 <button type="submit" className="search-button">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -227,93 +243,47 @@ useEffect(() => {
             </div>
 
             <footer className="footer">
-              <div className="footer-links">
+              {/* <div className="footer-links">
                 <a href="https://github.com/titaniumnetwork-dev">TitaniumNetwork</a>
                 <a href="https://discord.gg/unblock">Discord</a>
                 <a href="https://github.com/tomphttp">TompHTTP</a>
                 <a href="https://github.com/titaniumnetwork-dev/Ultraviolet-App">GitHub</a>
                 <a href="credits.html">Credits</a>
-              </div>
+              </div> */}
               <div className="footer-copyright">
-                <span>Ultraviolet &copy; TN 2023</span>
+                <span>IncogWay</span>
               </div>
             </footer>
           </div>
         )}
 
-        {/* Search Mode - Persistent Top Bar */}
+        {/* Search Mode - Full Screen iframe with simple back button */}
         {isSearching && (
-          <>
-            <div className="persistent-search-bar">
-              <div className="search-bar-content">
-                <button 
-                  className="home-button"
-                  onClick={() => {
-                    setIsSearching(false);
-                    setSearchQuery("");
-                  }}
-                >
-                  <img className="mini-logo" src="/uv.png" alt="UV" />
-                </button>
-                
-                <form className="persistent-search-container" onSubmit={handlePersistentSearch}>
-                  <input
-                    type="text"
-                    placeholder="Search the web freely"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyPress={handlePersistentKeyPress}
-                    className="persistent-search-input"
-                  />
-                  <button type="submit" className="persistent-search-button">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="11" cy="11" r="8"></circle>
-                      <path d="M21 21l-4.35-4.35"></path>
-                    </svg>
-                  </button>
-                </form>
-
-                <div className="search-controls">
-                  <button 
-                    className="control-button" 
-                    title="Refresh"
-                    onClick={() => {
-                      const frame = document.getElementById("uv-frame");
-                      if (frame && frame.src) {
-                        frame.src = frame.src;
-                      }
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="23 4 23 10 17 10"></polyline>
-                      <polyline points="1 20 1 14 7 14"></polyline>
-                      <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
-                    </svg>
-                  </button>
-                  <button 
-                    className="control-button" 
-                    title="Fullscreen"
-                    onClick={() => {
-                      const frame = document.getElementById("uv-frame");
-                      if (frame) {
-                        if (frame.requestFullscreen) {
-                          frame.requestFullscreen();
-                        }
-                      }
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
-                    </svg>
-                  </button>
-                </div>
-              </div>
+          <div className="search-mode">
+            {/* Simple back button */}
+            <div className="back-button-container">
+              <button 
+                className="back-button"
+                onClick={handleGoHome}
+                title="Go back to home"
+              >
+                ← Back to Home
+              </button>
             </div>
             
+            {/* Full screen iframe with loader */}
             <div className="frame-container">
+              {isLoading && (
+                <div className="loader-container">
+                  <div className="loader">
+                    <div className="loader-spinner"></div>
+                    <div className="loader-text">Loading your page...</div>
+                  </div>
+                </div>
+              )}
               <iframe id="uv-frame" className="proxy-frame"></iframe>
             </div>
-          </>
+          </div>
         )}
       </div>
     </>
