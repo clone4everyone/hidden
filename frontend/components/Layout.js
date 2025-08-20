@@ -44,7 +44,7 @@ export default function Layout({ children, title = "Ultraviolet Proxy" }) {
             return true;
           }
 
-          const registration = await navigator.serviceWorker.register('/uv/sw.js', {
+          const registration = await navigator.serviceWorker.register('/uv/uv.sw.js', {
             scope: '/uv/service/'
           });
           
