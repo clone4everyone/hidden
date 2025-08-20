@@ -12,7 +12,7 @@
 		"format": "prettier --config .prettierrc.js --write .",
 		"lint": "eslint ./src/",
 		"lint:fix": "eslint ./src/ --fix",
-		 "build": "next build frontend"
+		 "build": "cd frontend && npm install && npm run build"
 	},
 	"keywords": [
 		"proxy"
