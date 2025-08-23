@@ -13,39 +13,17 @@ export default function Home() {
     console.log("[handleProxyNavigation] Invoked with address:", address);
     setIsLoading(true);
 
-    // Mobile detection
+    // Detect mobile
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
       navigator.userAgent
     );
     console.log("Mobile device detected:", isMobile);
 
     try {
-      // Register service worker first with mobile-specific retry logic
-      let retryCount = 0;
-      const maxRetries = isMobile ? 3 : 2;
-
-      const registerWithRetry = async () => {
-        try {
-          await registerSW();
-          console.log("Service worker registered successfully");
-        } catch (err) {
-          console.error(
-            `Service worker registration attempt ${retryCount + 1} failed:`,
-            err
-          );
-          retryCount++;
-
-          if (retryCount < maxRetries) {
-            // Wait longer for mobile devices
-            const delay = isMobile ? 2000 : 1000;
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            return await registerWithRetry();
-          }
-          throw err;
-        }
-      };
-
-      await registerWithRetry();
+      // ✅ Always register service worker first and wait until it's ready
+      await registerSW();
+      await navigator.serviceWorker.ready;
+      console.log("✅ Service worker registered and ready");
     } catch (err) {
       console.error("Failed to register service worker:", err);
       toast.error(
@@ -79,10 +57,12 @@ export default function Home() {
 
       await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
 
-      const connectionDelay = isMobile ? 2000 : 100;
-      await new Promise((resolve) => setTimeout(resolve, connectionDelay));
+      // Extra wait for mobile devices
+      if (isMobile) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
 
-      // Navigate to the proxied URL
+      // ✅ Only set iframe src after SW is fully ready
       const proxiedUrl = __uv$config.prefix + __uv$config.encodeUrl(address);
       frame.src = proxiedUrl;
       console.log("Successfully navigated to:", proxiedUrl);
