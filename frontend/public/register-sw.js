@@ -3,7 +3,7 @@
 /**
  * Distributed with Ultraviolet and compatible with most configurations.
  */
-const stockSW = "/uv/sw.js";
+const stockSW = "/uv/uv.sw.js";   // ✅ matches uv.config.js
 
 /**
  * List of hostnames that are allowed to run serviceworkers on http://
@@ -26,10 +26,10 @@ async function registerSW() {
     throw new Error("Service workers cannot be registered without https.");
   }
 
-  // Register service worker with explicit scope
+  // ✅ Register SW with explicit scope
   await navigator.serviceWorker.register(stockSW, { scope: "/uv/" });
 
-  // Wait until it is fully active before continuing
+  // ✅ Wait until SW is fully active
   await navigator.serviceWorker.ready;
   console.log("✅ Service worker registered and ready");
 }
